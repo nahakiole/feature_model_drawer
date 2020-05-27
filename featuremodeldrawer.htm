@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8"/>
+        <style type="text/css">
+            body { margin:0; }
+            #canv { position:fixed;top:0;left:0;background:#fff;z-index:-1; }
+            .abstract, .concrete { position:absolute;border:2px solid #afafaf;padding:6px 8px;font:"Times New Roman" 14px;font-color:#888; }
+            .abstract { background:#f4f4f4; }
+            .concrete { background:#dadada; }
+            #desc { padding:8px 15px; }
+            #sett { padding:0px 15px;display:none; }
+            .dot_mandatory, .dot_optional { position:absolute;top:-10px;left:50%;padding:6px;margin-left:-8px;border:2px solid #888;border-radius:10px; }
+            .dot_mandatory { background:#888; }
+            .dot_optional { background:white; }
+        </style>
+        <title>Draw a feature model and be a good boi</title>
+    </head>
+    <body>
+        <div id="desc">Click space => new box, right click box => edit box, double click two boxes => connect them</div>
+        <div id="sett">
+            <input id="boxname" type="text"/>
+            <select id="abstract"><option value="A">Abstract</option><option value="C">Concrete</option></select>
+            <select id="child"><option value="C">Normal child</option><option value="M">Mandatory</option><option value="P">Optional</option></select>
+            <select id="parent"><option value="P">Normal parent</option><option value="O">Or</option><option value="A">Alternative</option></select>
+        </div>
+        <canvas id="canv"></canvas>
+        <script type="text/javascript">
+            var sett = document.getElementById("sett");
+            var sett_name = document.getElementById("boxname");
+            var sett_abstract = document.getElementById("abstract");
+            var sett_child = document.getElementById("child");
+            var sett_parent = document.getElementById("parent");
+            var canv = document.getElementById("canv");
+            canv.width  = window.innerWidth;
+            canv.height = window.innerHeight;
+            var draw  = canv.getContext("2d");
+            draw.strokeStyle = "#555";
+            draw.fillStyle = "#555";
+            draw.lineWidth = 2;
+            var boxes = {} // indexed by box id
+            var grid_size = 10;
+            var arc_radius = 25;
+            var CHILD_NORMAL = "C", CHILD_MANDATORY = "M", CHILD_OPTIONAL = "P";
+            var PARENT_NORMAL = "P", PARENT_OR = "O", PARENT_ALTERNATIVE = "A";
+            
+            // Lines are drawn on the canvas
+            var redraw_lines = function () {
+                draw.clearRect(0, 0, canv.width, canv.height);
+                for (var id in boxes) {
+                    var box = boxes[id];
+                    var el = document.getElementById(id);
+                    var has_parent = false;
+                    var children = []; // Child elements
+                    box.connections.forEach(cld => {
+                        if (cld.offsetTop > el.offsetTop + el.clientHeight) {
+                            children.push(cld);
+                        } else {
+                            has_parent = true;
+                        }
+                    });
+                    if (has_parent && box.child_style != CHILD_NORMAL) {
+                        el.firstChild.style.display = null;
+                        el.firstChild.className = (box.child_style == CHILD_MANDATORY) ? "dot_mandatory" : "dot_optional";
+                    } else {
+                        el.firstChild.style.display = "none";
+                    }
+                    var min_angle = Math.PI, max_angle = 0;
+                    var angle;
+                    children.forEach(c => {
+                        var lx = c.offsetLeft + c.clientWidth / 2;
+                        var ly = c.offsetTop;
+                        var ux = el.offsetLeft + el.clientWidth / 2;
+                        var uy = el.offsetTop + el.clientHeight;
+                        angle = Math.PI + Math.atan2(uy - ly, ux - lx);
+                        if (angle < min_angle) min_angle = angle;
+                        if (angle > max_angle) max_angle = angle;
+                        draw.beginPath();
+                        draw.moveTo(ux, uy);
+                        draw.lineTo(lx, ly);
+                        draw.stroke();
+                    });
+                    if (box.parent_style != PARENT_NORMAL && children.length >= 2) {
+                        draw.beginPath();
+                        var lx = el.offsetLeft + el.clientWidth / 2;
+                        var ly = el.offsetTop + el.clientHeight;
+                        draw.moveTo(lx, ly);
+                        draw.arc(lx, ly, arc_radius, min_angle, max_angle);
+                        if (box.parent_style == PARENT_OR) {
+                            draw.fill();
+                        } else {
+                            draw.stroke();
+                        }
+                    }
+                }
+            };
+            
+            // Settings div changes selected element
+            var show_settings = function(show, element)
+            {
+                if (editing) {
+                    editing.style["border-color"] = null;
+                }
+                if (! show) {
+                    editing = null;
+                    sett.style.display = "none";
+                    sett_name.oninput = null;
+                    // sett_abstract.
+                } else {
+                    sett.style.display = "block"
+                    editing = element;
+                    editing.style["border-color"] = "#06f";
+                    sett_name.value = element.firstChild.nextSibling.textContent;
+                    sett_name.oninput = function(ev) {
+                        element.firstChild.nextSibling.textContent = sett_name.value;
+                        redraw_lines();
+                    }
+                    sett_abstract.value = boxes[element.id].is_abstract ? "A" : "C";
+                    sett_abstract.onchange = function(ev) {
+                        if (sett_abstract.value == "A") {
+                            boxes[element.id].is_abstract = true;
+                            element.className = "abstract";
+                        } else {
+                            boxes[element.id].is_abstract = false;
+                            element.className = "concrete";
+                        }
+                        redraw_lines();
+                    }
+                    sett_child.value = boxes[element.id].child_style;
+                    sett_child.onchange = function(ev) {
+                        boxes[element.id].child_style = sett_child.value;
+                        redraw_lines();
+                    }
+                    sett_parent.value = boxes[element.id].parent_style;
+                    sett_parent.onchange = function(ev) {
+                        boxes[element.id].parent_style = sett_parent.value;
+                        redraw_lines();
+                    }
+                }
+            };
+            
+            var line_from = null;
+            var last_box_id = 0;
+            var editing = null;
+            
+            canv.onclick = function(ev)
+            {
+                var text = prompt("Give box name");
+                if (! text) return;
+                var div = document.createElement("div");
+                div.className = "abstract";
+                div.id = "box" + (++last_box_id);
+                div.style["user-select"] = "none";
+                boxes[div.id] = { connections: [], is_abstract: true, child_style: CHILD_NORMAL, parent_style: PARENT_NORMAL }
+                var dot = document.createElement("div");
+                dot.className = "dot_optional";
+                div.appendChild(dot);
+                div.appendChild(document.createTextNode(text));
+                document.body.appendChild(div);
+                var offx = 0, offy = 0;
+                var mover = function(ev) {
+                    div.style.left = (ev.clientX - offx) + "px";
+                    div.style.top  = (ev.clientY - offy) + "px";
+                    redraw_lines();
+                };
+                mover(ev);
+                div.onmousedown = function(ev) {
+                    offx = ev.clientX - div.offsetLeft;
+                    offy = ev.clientY - div.offsetTop;
+                    window.addEventListener("mousemove", mover);
+                    window.onmouseup = function(ev) {
+                        window.removeEventListener("mousemove", mover);
+                    };
+                };
+                div.oncontextmenu = function(ev) {
+                    ev.preventDefault();
+                    if (line_from && line_from == div) return;
+                    if (editing) {
+                        if (editing == div) {
+                            show_settings(false);
+                            return;
+                        }
+                    }
+                    show_settings(true, div);
+                };
+                div.ondblclick = function(ev) {
+                    if (editing && editing == div) {
+                        show_settings(false);
+                    }
+                    if (line_from == null) {
+                        line_from = div;
+                        line_from.style["border-color"] = "red";
+                    } else {
+                        line_from.style["border-color"] = null;
+                        if (line_from != div) {
+                            boxes[div.id].connections.push(line_from);
+                            boxes[line_from.id].connections.push(div);
+                            redraw_lines();
+                        }
+                        line_from = null;
+                    }
+                };
+            };
+            canv.oncontextmenu = function(ev) {
+                ev.preventDefault();
+            };
+            redraw_lines();
+        </script>
+    </body>
+</html>
