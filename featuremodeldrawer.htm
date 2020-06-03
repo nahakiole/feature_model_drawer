@@ -22,7 +22,8 @@
             <input id="boxname" type="text"/>
             <select id="abstract"><option value="A">Abstract</option><option value="C">Concrete</option></select>
             <select id="child"><option value="C">Normal child</option><option value="M">Mandatory</option><option value="P">Optional</option></select>
-            <select id="parent"><option value="P">Normal parent</option><option value="O">Or</option><option value="A">Alternative</option></select>
+            <select id="parent"><option value="A">And</option><option value="O">Or</option><option value="X">Alternative</option></select>
+            <input id="delete" type="button" value="Delete"/>
         </div>
         <canvas id="canv"></canvas>
         <script type="text/javascript">
@@ -31,6 +32,7 @@
             var sett_abstract = document.getElementById("abstract");
             var sett_child = document.getElementById("child");
             var sett_parent = document.getElementById("parent");
+            var sett_delete = document.getElementById("delete");
             var canv = document.getElementById("canv");
             canv.width  = window.innerWidth;
             canv.height = window.innerHeight;
@@ -42,7 +44,7 @@
             var grid_size = 10;
             var arc_radius = 25;
             var CHILD_NORMAL = "C", CHILD_MANDATORY = "M", CHILD_OPTIONAL = "P";
-            var PARENT_NORMAL = "P", PARENT_OR = "O", PARENT_ALTERNATIVE = "A";
+            var PARENT_NORMAL = "A", PARENT_OR = "O", PARENT_ALTERNATIVE = "X";
             
             // Lines are drawn on the canvas
             var redraw_lines = function () {
@@ -105,38 +107,55 @@
                     editing = null;
                     sett.style.display = "none";
                     sett_name.oninput = null;
-                    // sett_abstract.
-                } else {
-                    sett.style.display = "block"
-                    editing = element;
-                    editing.style["border-color"] = "#06f";
-                    sett_name.value = element.firstChild.nextSibling.textContent;
-                    sett_name.oninput = function(ev) {
-                        element.firstChild.nextSibling.textContent = sett_name.value;
-                        redraw_lines();
-                    }
-                    sett_abstract.value = boxes[element.id].is_abstract ? "A" : "C";
-                    sett_abstract.onchange = function(ev) {
-                        if (sett_abstract.value == "A") {
-                            boxes[element.id].is_abstract = true;
-                            element.className = "abstract";
-                        } else {
-                            boxes[element.id].is_abstract = false;
-                            element.className = "concrete";
-                        }
-                        redraw_lines();
-                    }
-                    sett_child.value = boxes[element.id].child_style;
-                    sett_child.onchange = function(ev) {
-                        boxes[element.id].child_style = sett_child.value;
-                        redraw_lines();
-                    }
-                    sett_parent.value = boxes[element.id].parent_style;
-                    sett_parent.onchange = function(ev) {
-                        boxes[element.id].parent_style = sett_parent.value;
-                        redraw_lines();
-                    }
+                    sett_abstract.onchange = null;
+                    sett_child.onchange = null;
+                    sett_parent.onchange = null;
+                    sett_delete.onclick = null;
+                    return
                 }
+                sett.style.display = "block"
+                editing = element;
+                editing.style["border-color"] = "#06f";
+                sett_name.value = element.firstChild.nextSibling.textContent;
+                sett_name.oninput = function(ev) {
+                    element.firstChild.nextSibling.textContent = sett_name.value;
+                    redraw_lines();
+                };
+                sett_abstract.value = boxes[element.id].is_abstract ? "A" : "C";
+                sett_abstract.onchange = function(ev) {
+                    if (sett_abstract.value == "A") {
+                        boxes[element.id].is_abstract = true;
+                        element.className = "abstract";
+                    } else {
+                        boxes[element.id].is_abstract = false;
+                        element.className = "concrete";
+                    }
+                    redraw_lines();
+                };
+                sett_child.value = boxes[element.id].child_style;
+                sett_child.onchange = function(ev) {
+                    boxes[element.id].child_style = sett_child.value;
+                    redraw_lines();
+                };
+                sett_parent.value = boxes[element.id].parent_style;
+                sett_parent.onchange = function(ev) {
+                    boxes[element.id].parent_style = sett_parent.value;
+                    redraw_lines();
+                };
+                sett_delete.onclick = function(ev) {
+                    delete boxes[element.id];
+                    for (var id in boxes) {
+                        var con = boxes[id].connections;
+                        for (var j = con.length - 1; j >= 0; --j) {
+                            if (con[j].id == element.id) {
+                                con.splice(j, 1);
+                            }
+                        }
+                    }
+                    document.body.removeChild(element);
+                    show_settings(false);
+                    redraw_lines();
+                };
             };
             
             var line_from = null;
