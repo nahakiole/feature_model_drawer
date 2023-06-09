@@ -27,7 +27,7 @@
         </div>
         <svg xmlns="http://www.w3.org/2000/svg" id="model">
             <style>
-                text { font:18px serif;user-select:none; }
+                text { font:18px serif;user-select:none;white-space:pre; }
                 rect { fill:#eee;stroke:#afafaf;stroke-width:1px; }
                 line { stroke:#555;stroke-width:2;stroke-linecap:round; }
                 circle { stroke:#555;stroke-width:2;fill:#fff; }
@@ -95,11 +95,23 @@
             };
             var pad = { x: 8, y: 6};
             var box_update_complete = function(box) {
-                /* Update text first, then use the bounding box of text to update the background */
+                /* The bounding box does not work for empty
+                 * text elements... ugly workaround */
+                var empty_text = false;
+                if (box.t.firstChild.textContent == "") {
+                    box.t.firstChild.textContent = ".";
+                    empty_text = true;
+                }
+                /* Update text first, it determines the box position */
                 var tbb = box.t.getBBox();
                 svgatt(box.t, {x: box.x - floor(tbb.width / 2), y: box.y -floor(tbb.height / 4) });
+                /* Update the surrounding box/border. */
                 tbb = box.t.getBBox();
                 svgatt(box.r, {x: tbb.x - pad.x, y: tbb.y - pad.y, width: tbb.width + pad.x * 2, height: tbb.height + pad.y * 2});
+                /* Restore empty text box */
+                if (empty_text) {
+                    box.t.firstChild.textContent = "";
+                }
                 /* Update connected lines */
                 box_update_visual(box);
                 for (var i in box.conns) {
