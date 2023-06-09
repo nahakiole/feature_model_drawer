@@ -13,8 +13,9 @@
     <body>
         <div id="toolbar">
             <p>
-                <input type="button" value="Export SVG" id="export_svg"/>
                 <input type="button" value="Export PNG" id="export_png"/>
+                <input type="button" value="Export SVG" id="export_svg"/>
+                <input type="button" value="Import SVG" id="import_svg"/>
                 <span>Click empty space: create new box | Right click box: edit it | Double click other box during edit: (un-)connect them</span>
             </p>
             <div id="settings">
@@ -56,7 +57,6 @@
             var cancel_space_click = false; /* Click events seem to be uncancelable from SVG sub-elements */
             var cancel_space_click_function = function() { cancel_space_click = true; };
             
-            
             /* Input elements for box editing */
             const settings = id("settings");
             const settings_name = id("boxname");
@@ -69,8 +69,8 @@
             
             /* Box management */
             var all_boxes = [];
-            var create_box = function(description, x, y) {
-                var box = create_box_element(description, x, y, false, CHILD_NORMAL, PARENT_NORMAL);
+            var create_box = function(description, x, y, concrete, childstyle, parentstyle) {
+                var box = create_box_element(description, x, y, concrete, childstyle, parentstyle);
                 box.g.onclick = cancel_space_click_function;
                 box.g.ondblclick = function() { box_doubleclick(box); };
                 box.g.onmousedown = function(ev) { box_start_move(box, ev); };
@@ -297,7 +297,7 @@
                     return;
                 }
                 var x = ev.clientX - svg_left, y = ev.clientY - svg_top;
-                var box = create_box("Box name", x, y + 10);
+                var box = create_box("Box name", x, y + 10, false, CHILD_NORMAL, PARENT_NORMAL);
                 box_editmode(box);
             };
             svg.addEventListener("click", space_clicked);
@@ -319,7 +319,7 @@
             /* SVG subelements can't cancel default action... need to disable it for entire SVG */
             svg.oncontextmenu = function(ev) { ev.preventDefault(); };
             
-            /* Export options */
+            /* Export/import options */
             var create_exported_svg = function() {
                 /* Find area with elements */
                 var dim = { left: parseInt(svg.getAttribute("width")), right: 0, top: parseInt(svg.getAttribute("height")), bottom: 0 };
@@ -387,17 +387,73 @@
                 document.body.removeChild(new_svg);
                 return { w: new_w, h: new_h, data: URL.createObjectURL(new Blob([new_svg.outerHTML], {type: "image/svg+xml;charset=utf-8"})) };
             };
-            id("export_svg").addEventListener("click", function() {
-                if (all_boxes.length == 0) {
-                    alert("Nothing to export.");
+            var import_exported_svg = function(svg_doc) {
+                /* Find and add boxes */
+                var box_pos = [];  /* Box positions */
+                var con_group = null; /* First g element contains connections */
+                for (var i in svg_doc.childNodes) {
+                    var el = svg_doc.childNodes[i];
+                    if (el.nodeName != "g")
+                        continue;
+                    if (el.childNodes.length < 4) {
+                        con_group = el;
+                        continue;
+                    }
+                    var path = el.childNodes[0]; /* Parent type */
+                    var rect = el.childNodes[1]; /* Surrounding box */
+                    var text = el.childNodes[2]; /* Box name */
+                    var circ = el.childNodes[3]; /* Child type */
+                    if (path.nodeName != "path" || rect.nodeName != "rect" || text.nodeName != "text" || circ.nodeName != "circle") {
+                        con_group = el;
+                        continue;
+                    }
+                    var name = text.firstChild.textContent;
+                    var x = parseFloat(rect.getAttribute("x")), y = parseFloat(rect.getAttribute("y"));
+                    var w = parseFloat(rect.getAttribute("width")), h = parseFloat(rect.getAttribute("height"));
+                    var concrete = (rect.style.fill != "");
+                    var childstyle = (circ.getAttribute("visibility") == "hidden")
+                        ? CHILD_NORMAL
+                        : (circ.style.fill.match(/\d+/g).map(Number).join(",") == "255,255,255")
+                            ? CHILD_OPTIONAL
+                            : CHILD_MANDATORY;
+                    var parentstyle = (path.getAttribute("visibility") == "hidden")
+                        ? PARENT_NORMAL
+                        : (path.style.fill == "none")
+                            ? PARENT_ALTERNATIVE
+                            : PARENT_OR;
+                    var box = create_box(name, x + 0.5 * w + 100, y + 170, concrete, childstyle, parentstyle);
+                    box_pos.push({ x1: x, y1: y, x2: x + w, y2: y + h, box: box });
+                }
+                if (box_pos.length == 0 || con_group == null) {
+                    alert("Failed to import SVG, not enough elements found");
                     return;
                 }
-                var expsvg = create_exported_svg();
-                var link = document.createElement("a");
-                link.href = expsvg.data;
-                link.download = "feature_model.svg";
-                link.click();
-            });
+                /* Find and add lines between boxes */
+                connections = [];
+                for (var i in con_group.childNodes) {
+                    var line = con_group.childNodes[i];
+                    if (line.nodeName != "line")
+                        continue;
+                    var boxes = [];
+                    var x1 = parseFloat(line.getAttribute("x1")), y1 = parseFloat(line.getAttribute("y1"));
+                    var x2 = parseFloat(line.getAttribute("x2")), y2 = parseFloat(line.getAttribute("y2"));
+                    for (var j in box_pos) {
+                        var box = box_pos[j];
+                        /* Is one of the ends of the line in a box? */
+                        if (((x1 + 1) >= box.x1 && (x1 - 1) <= box.x2 && (y1 + 1) >= box.y1 && (y1 - 1) <= box.y2)
+                         || ((x2 + 1) >= box.x1 && (x2 - 1) <= box.x2 && (y2 + 1) >= box.y1 && (y2 - 1) <= box.y2)) {
+                            boxes.push(box);
+                        }
+                    }
+                    connections.push({ line: line, boxes: boxes });
+                }
+                for (var i in connections) {
+                    var connection = connections[i];
+                    if (connection.boxes.length < 2)
+                        continue;
+                    box_connect_toggle(connection.boxes[0].box, connection.boxes[1].box);
+                }
+            };
             id("export_png").addEventListener("click", function() {
                 if (all_boxes.length == 0) {
                     alert("Nothing to export.");
@@ -418,6 +474,37 @@
                     link.click();
                 };
                 img.src = expsvg.data;
+            });
+            id("export_svg").addEventListener("click", function() {
+                if (all_boxes.length == 0) {
+                    alert("Nothing to export.");
+                    return;
+                }
+                var expsvg = create_exported_svg();
+                var link = document.createElement("a");
+                link.href = expsvg.data;
+                link.download = "feature_model.svg";
+                link.click();
+            });
+            id("import_svg").addEventListener("click", function() {
+                if (all_boxes.length > 0) {
+                    if (! confirm("Current diagram is not empty, do you want to import more elements?"))
+                        return;
+                }
+                var file_inp = document.createElement("input");
+                file_inp.setAttribute("type", "file");
+                file_inp.setAttribute("accept", ".svg,image/svg+xml");
+                file_inp.onchange = function() {
+                    if (file_inp.files.length < 1)
+                        return;
+                    let reader = new FileReader();
+                    reader.onload = function() {
+                        let imported_svg = new DOMParser().parseFromString(reader.result, "image/svg+xml");
+                        import_exported_svg(imported_svg.documentElement);
+                    };
+                    reader.readAsText(file_inp.files[0]);
+                }
+                file_inp.click();
             });
             
             /* Let's go ! */
