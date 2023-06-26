@@ -407,6 +407,8 @@
                         con_group = el;
                         continue;
                     }
+                    if (! text.firstChild)
+                        continue;
                     var name = text.firstChild.textContent;
                     var x = parseFloat(rect.getAttribute("x")), y = parseFloat(rect.getAttribute("y"));
                     var w = parseFloat(rect.getAttribute("width")), h = parseFloat(rect.getAttribute("height"));
