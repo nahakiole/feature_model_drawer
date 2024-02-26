@@ -1,560 +1,641 @@
 <!DOCTYPE html>
 <html>
-    <head>
-        <meta charset="utf-8"/>
-        <meta name="viewport" content="width=device-width, initial-scale=1"/>
-        <link rel="stylesheet" href="bootstrap.min.css">
-        <style type="text/css">
-            body {
-                margin: 0;
-                overflow: hidden;
-            }
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <link rel="stylesheet" href="bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css"
+          integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA=="
+          crossorigin="anonymous" referrerpolicy="no-referrer"/>
 
-            #toolbar {
-                position: fixed;
-                top: 10px;
-                left: 10px;
-                padding: 8px;
-            }
+    <link rel="icon" href="favicon.png" type="image/x-icon"/>
+    <style type="text/css">
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
 
-            #toolbar p {
-                margin: 0 0 8px 0;
-            }
+        #toolbar {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            padding: 8px;
+        }
 
-            #toolbar p span {
-                margin-left: 8px;
-            }
+        #toolbar p {
+            margin: 0 0 8px 0;
+        }
 
-            .help {
-                position: fixed;
-                top: 5px;
-                right: 5px;
-                width: 300px;
-            }
-        </style>
-        <title>Draw a feature model</title>
-    </head>
-    <body>
-        <div id="toolbar">
-            <p>
-                <input type="button" class="btn btn-primary" value="Export PNG" id="export_png" title="Save diagram as PNG image"/>
-                <input type="button" class="btn btn-primary" value="Export SVG" id="export_svg" title="Save diagram as SVG image that can be re-imported"/>
-                <input type="button" class="btn btn-primary" value="Import SVG" id="import_svg" title="Import an existing diagram that was saved as SVG"/>
-            </p>
+        #toolbar p span {
+            margin-left: 8px;
+        }
 
-            <div class="card p-2 help">Click empty space: create new box <br>Right click box: edit it <br>Double click other
-                box during edit: (un-)connect them</div>
-
-
-            <div id="settings" class="card p-2">
-                <label for="boxname" class="form-label">Name of the Box</label>
-                <input id="boxname" type="text" class="form-control mb-2" />
-                <label for="abstract" class="form-label">Type of the Box (Abstract / Concrete)</label>
-                <select class="form-control mb-2" id="abstract">
-                    <option value="A">Abstract</option>
-                    <option value="C">Concrete</option>
-                </select>
-                <label for="child" class="form-label">Type of Child (Normal, Mandatory, Optional)</label>
-                <select class="form-control mb-2" id="child">
-                    <option value="C">Normal child</option>
-                    <option value="M">Mandatory</option>
-                    <option value="P">Optional</option>
-                </select>
-                <label for="parent" class="form-label">Type of Parent (And, Or, Alternative)</label>
-                <select class="form-control mb-2" id="parent">
-                    <option value="A">And</option>
-                    <option value="O">Or</option>
-                    <option value="X">Alternative</option>
-                </select>
-                <input id="delete" type="button" value="Delete" class="btn btn-danger" />
-            </div>
+        .help {
+            position: fixed;
+            top: 5px;
+            right: 5px;
+            width: 400px;
+        }
+    </style>
+    <title>Draw a feature model</title>
+</head>
+<body>
+<div id="toolbar">
+    <div>
+        <div class="mb-2">
+            <i class="fa-solid fa-diagram-project"></i> Draw a feature model
         </div>
-        <svg xmlns="http://www.w3.org/2000/svg" id="model">
-            <style>
-                text { font:18px serif;user-select:none;white-space:pre; }
-                rect { fill:#eee;stroke:#afafaf;stroke-width:1px; }
-                line { stroke:#555;stroke-width:2;stroke-linecap:round; }
-                circle { stroke:#555;stroke-width:2;fill:#fff; }
-                path { stroke:#555;fill:#555;stroke-width:2; }
-            </style>
-        </svg>
-        <script type="text/javascript">
-            const floor = Math.floor.bind(Math);
-            const id = document.getElementById.bind(document);
-            const svgatt = function(element, attributes) {
-                for (var prop in attributes)
-                    element.setAttribute(prop, attributes[prop]);
-            };
-            const svgel = function(name, attributes) {
-                var el = document.createElementNS("http://www.w3.org/2000/svg", name);
-                if (attributes != undefined)
-                    svgatt(el, attributes);
-                return el;
-            };
-            
-            /* SVG image containing one group with all lines and zero or more groups representing boxes */
-            const svg = id("model");
-            const lines = svgel("g");
-            svg.appendChild(lines);
-            
-            var cancel_space_click = false; /* Click events seem to be uncancelable from SVG sub-elements */
-            var cancel_space_click_function = function() { cancel_space_click = true; };
-            
-            /* Input elements for box editing */
-            const settings = id("settings");
-            const settings_name = id("boxname");
-            const settings_abstract = id("abstract");
-            const settings_child = id("child");
-            const settings_parent = id("parent");
-            const settings_delete = id("delete");
-            const CHILD_NORMAL = "C", CHILD_MANDATORY = "M", CHILD_OPTIONAL = "P";
-            const PARENT_NORMAL = "A", PARENT_OR = "O", PARENT_ALTERNATIVE = "X";
-            
-            /* Box management */
-            var all_boxes = [];
-            var create_box = function(description, x, y, concrete, childstyle, parentstyle) {
-                var box = create_box_element(description, x, y, concrete, childstyle, parentstyle);
-                box.g.onclick = cancel_space_click_function;
-                box.g.ondblclick = function() { box_doubleclick(box); };
-                box.g.onmousedown = function(ev) { box_start_move(box, ev); };
-                box.g.oncontextmenu = function() { cancel_space_click = false; box_editmode(box); };
-                box_update_complete(box);
-                all_boxes.push(box);
-                return box;
-            };
-            var create_box_element = function(description, x, y, concrete, childstyle, parentstyle) {
-                var g = svgel("g");              /* Logical box group */
-                var t = svgel("text");           /* Text field (determines box size) */
-                var r = svgel("rect");           /* Bordered box */
-                var c = svgel("circle", {r: 7}); /* Child type indicator (dot) */
-                var p = svgel("path");           /* Parent type indicator (arc) */
-                t.appendChild(document.createTextNode(description));
-                g.appendChild(p);
-                g.appendChild(r);
-                g.appendChild(t);
-                g.appendChild(c);
-                svg.appendChild(g);
-                return box = { x: x, y: y, g: g, t: t, r: r, c: c, p: p, conns: [], concrete: concrete, childstyle: childstyle, parentstyle: parentstyle };
-            };
-            var pad = { x: 8, y: 6};
-            var box_update_complete = function(box) {
-                /* The bounding box does not work for empty
-                 * text elements... ugly workaround */
-                var empty_text = false;
-                if (box.t.firstChild.textContent == "") {
-                    box.t.firstChild.textContent = ".";
-                    empty_text = true;
+        <button type="button" class="btn btn-primary" value="Export PNG" id="export_png"
+                title="Save diagram as PNG image"><i class="fa-solid fa-file-export"></i> Export PNG
+        </button>
+        <button type="button" class="btn btn-primary" value="Export SVG" id="export_svg"
+                title="Save diagram as SVG image that can be re-imported"><i class="fa-solid fa-file-export"></i> Export
+            SVG
+        </button>
+        <button type="button" class="btn btn-primary" value="Import SVG" id="import_svg"
+        ><i class="fa-solid fa-file-import"></i> Import SVG
+        </button>
+    </div>
+
+    <div class="card p-4 help">
+        <h3><i class="fa-solid fa-arrow-pointer"></i> Mouse Shortcuts</h3>
+        <b class="mt-2">Click empty space:</b> Create new box <br>
+        <b class="mt-2">Right click box:</b> Edit the box <br>
+        <b class="mt-2">Double click other
+            box during edit:</b> Connect or disconnect a box
+    </div>
+
+
+    <div id="settings" class="card p-2">
+        <label for="boxname" class="form-label">Name of the Box</label>
+        <input id="boxname" type="text" class="form-control mb-2"/>
+        <label for="abstract" class="form-label">Type of the Box (Abstract / Concrete)</label>
+        <select class="form-control mb-2" id="abstract">
+            <option value="A">Abstract</option>
+            <option value="C">Concrete</option>
+        </select>
+        <label for="child" class="form-label">Type of Child (Normal, Mandatory, Optional)</label>
+        <select class="form-control mb-2" id="child">
+            <option value="C">Normal child</option>
+            <option value="M">Mandatory</option>
+            <option value="P">Optional</option>
+        </select>
+        <label for="parent" class="form-label">Type of Parent (And, Or, Alternative)</label>
+        <select class="form-control mb-2" id="parent">
+            <option value="A">And</option>
+            <option value="O">Or</option>
+            <option value="X">Alternative</option>
+        </select>
+        <input id="delete" type="button" value="Delete" class="btn btn-danger"/>
+    </div>
+</div>
+<svg xmlns="http://www.w3.org/2000/svg" id="model">
+    <style>
+        text {
+            font: 18px serif;
+            user-select: none;
+            white-space: pre;
+        }
+
+        rect {
+            fill: #eee;
+            stroke: #afafaf;
+            stroke-width: 1px;
+        }
+
+        line {
+            stroke: #555;
+            stroke-width: 2;
+            stroke-linecap: round;
+        }
+
+        circle {
+            stroke: #555;
+            stroke-width: 2;
+            fill: #fff;
+        }
+
+        path {
+            stroke: #555;
+            fill: #555;
+            stroke-width: 2;
+        }
+    </style>
+</svg>
+<script type="text/javascript">
+    const floor = Math.floor.bind(Math);
+    const id = document.getElementById.bind(document);
+    const svgatt = function (element, attributes) {
+        for (var prop in attributes)
+            element.setAttribute(prop, attributes[prop]);
+    };
+    const svgel = function (name, attributes) {
+        var el = document.createElementNS("http://www.w3.org/2000/svg", name);
+        if (attributes != undefined)
+            svgatt(el, attributes);
+        return el;
+    };
+
+    /* SVG image containing one group with all lines and zero or more groups representing boxes */
+    const svg = id("model");
+    const lines = svgel("g");
+    svg.appendChild(lines);
+
+    var cancel_space_click = false; /* Click events seem to be uncancelable from SVG sub-elements */
+    var cancel_space_click_function = function () {
+        cancel_space_click = true;
+    };
+
+    /* Input elements for box editing */
+    const settings = id("settings");
+    const settings_name = id("boxname");
+    const settings_abstract = id("abstract");
+    const settings_child = id("child");
+    const settings_parent = id("parent");
+    const settings_delete = id("delete");
+    const CHILD_NORMAL = "C", CHILD_MANDATORY = "M", CHILD_OPTIONAL = "P";
+    const PARENT_NORMAL = "A", PARENT_OR = "O", PARENT_ALTERNATIVE = "X";
+
+    /* Box management */
+    var all_boxes = [];
+    var create_box = function (description, x, y, concrete, childstyle, parentstyle) {
+        var box = create_box_element(description, x, y, concrete, childstyle, parentstyle);
+        box.g.onclick = cancel_space_click_function;
+        box.g.ondblclick = function () {
+            box_doubleclick(box);
+        };
+        box.g.onmousedown = function (ev) {
+            box_start_move(box, ev);
+        };
+        box.g.oncontextmenu = function () {
+            cancel_space_click = false;
+            box_editmode(box);
+        };
+        box_update_complete(box);
+        all_boxes.push(box);
+        return box;
+    };
+    var create_box_element = function (description, x, y, concrete, childstyle, parentstyle) {
+        var g = svgel("g");              /* Logical box group */
+        var t = svgel("text");           /* Text field (determines box size) */
+        var r = svgel("rect");           /* Bordered box */
+        var c = svgel("circle", {r: 7}); /* Child type indicator (dot) */
+        var p = svgel("path");           /* Parent type indicator (arc) */
+        t.appendChild(document.createTextNode(description));
+        g.appendChild(p);
+        g.appendChild(r);
+        g.appendChild(t);
+        g.appendChild(c);
+        svg.appendChild(g);
+        return box = {
+            x: x,
+            y: y,
+            g: g,
+            t: t,
+            r: r,
+            c: c,
+            p: p,
+            conns: [],
+            concrete: concrete,
+            childstyle: childstyle,
+            parentstyle: parentstyle
+        };
+    };
+    var pad = {x: 8, y: 6};
+    var box_update_complete = function (box) {
+        /* The bounding box does not work for empty
+         * text elements... ugly workaround */
+        var empty_text = false;
+        if (box.t.firstChild.textContent == "") {
+            box.t.firstChild.textContent = ".";
+            empty_text = true;
+        }
+        /* Update text first, it determines the box position */
+        var tbb = box.t.getBBox();
+        svgatt(box.t, {x: box.x - floor(tbb.width / 2), y: box.y - floor(tbb.height / 4)});
+        /* Update the surrounding box/border. */
+        tbb = box.t.getBBox();
+        svgatt(box.r, {
+            x: tbb.x - pad.x,
+            y: tbb.y - pad.y,
+            width: tbb.width + pad.x * 2,
+            height: tbb.height + pad.y * 2
+        });
+        /* Restore empty text box */
+        if (empty_text) {
+            box.t.firstChild.textContent = "";
+        }
+        /* Update connected lines */
+        box_update_visual(box);
+        for (var i in box.conns) {
+            var conn = box.conns[i];
+            box_update_visual((box == conn.box1) ? conn.box2 : conn.box1);
+        }
+    };
+    var parent_arc_r = 30;
+    var box_update_visual = function (box) {
+        var bb = box.r.getBBox();
+        var has_parents = false, num_children = 0;
+        var min_angle = Math.PI, max_angle = -Math.PI;
+        for (var i in box.conns) {
+            var conn = box.conns[i];
+            var parent_box, child_box, pbb, cbb;
+            if (conn.box1.y < conn.box2.y) {
+                parent_box = conn.box1, child_box = conn.box2;
+            } else {
+                parent_box = conn.box2, child_box = conn.box1;
+            }
+            pbb = parent_box.r.getBBox();
+            cbb = child_box.r.getBBox();
+            var px = floor(pbb.x + pbb.width / 2), py = pbb.y + pbb.height + 0.5;
+            var cx = floor(cbb.x + cbb.width / 2), cy = cbb.y - 0.5;
+            svgatt(conn.ln, {x1: px, y1: py, x2: cx, y2: cy});
+            if (box == parent_box) {
+                var angle = Math.atan2(cx - px, cy - py);
+                if (angle < min_angle) min_angle = angle;
+                if (angle > max_angle) max_angle = angle;
+                ++num_children;
+            } else {
+                has_parents = true;
+            }
+        }
+        box.r.style.fill = box.concrete ? "#ccc" : null;
+        if (box.childstyle != CHILD_NORMAL && has_parents) {
+            box.c.style.fill = (box.childstyle == CHILD_MANDATORY) ? "#888" : "#fff";
+            svgatt(box.c, {visibility: "visible", cx: floor(bb.x + bb.width / 2), cy: bb.y - 0.5});
+        } else {
+            svgatt(box.c, {visibility: "hidden"});
+        }
+        if (box.parentstyle != PARENT_NORMAL && num_children >= 2) {
+            box.p.style.fill = (box.parentstyle == PARENT_OR) ? null : "none";
+            var sx = floor(bb.x + bb.width / 2), sy = bb.y + bb.height + 0.5;         /* Center bottom */
+            var lx = sx + parent_arc_r * Math.sin(max_angle), ly = sy + parent_arc_r * Math.cos(max_angle); /* Left starting point */
+            var rx = sx + parent_arc_r * Math.sin(min_angle), ry = sy + parent_arc_r * Math.cos(min_angle); /* Right ending point */
+            var draw = "M " + sx + " " + sy + " L " + lx + " " + ly + " A " + parent_arc_r + " " + parent_arc_r + " 0 0 1 " + rx + " " + ry + " Z";
+            svgatt(box.p, {visibility: "visible", d: draw});
+        } else {
+            svgatt(box.p, {visibility: "hidden"});
+        }
+    };
+    var box_doubleclick = function (box) {
+        if (edited_box == null || edited_box == box)
+            return;
+        box_connect_toggle(box, edited_box);
+    };
+    var box_connect_toggle = function (box_a, box_b) {
+        /* Delete if they are already connected */
+        var removed_connection = false;
+        for (var i in box_a.conns) {
+            var conn = box_a.conns[i];
+            if (conn.box1 == box_b || conn.box2 == box_b) {
+                if (conn.ln != null) {
+                    lines.removeChild(conn.ln);
+                    conn.ln = null;
                 }
-                /* Update text first, it determines the box position */
-                var tbb = box.t.getBBox();
-                svgatt(box.t, {x: box.x - floor(tbb.width / 2), y: box.y -floor(tbb.height / 4) });
-                /* Update the surrounding box/border. */
-                tbb = box.t.getBBox();
-                svgatt(box.r, {x: tbb.x - pad.x, y: tbb.y - pad.y, width: tbb.width + pad.x * 2, height: tbb.height + pad.y * 2});
-                /* Restore empty text box */
-                if (empty_text) {
-                    box.t.firstChild.textContent = "";
+                box_a.conns.splice(i, 1);
+                removed_connection = true;
+                break;
+            }
+        }
+        for (var i in box_b.conns) {
+            var conn = box_b.conns[i];
+            if (conn.box1 == box_a || conn.box2 == box_a) {
+                if (conn.ln != null) {
+                    lines.removeChild(conn.ln);
+                    conn.ln = null;
                 }
-                /* Update connected lines */
-                box_update_visual(box);
-                for (var i in box.conns) {
-                    var conn = box.conns[i];
-                    box_update_visual((box == conn.box1) ? conn.box2 : conn.box1);
-                }
-            };
-            var parent_arc_r = 30;
-            var box_update_visual = function(box) {
-                var bb = box.r.getBBox();
-                var has_parents = false, num_children = 0;
-                var min_angle = Math.PI, max_angle = -Math.PI;
-                for (var i in box.conns) {
-                    var conn = box.conns[i];
-                    var parent_box, child_box, pbb, cbb;
-                    if (conn.box1.y < conn.box2.y) {
-                        parent_box = conn.box1, child_box = conn.box2;
-                    } else {
-                        parent_box = conn.box2, child_box = conn.box1;
-                    }
-                    pbb = parent_box.r.getBBox();
-                    cbb = child_box.r.getBBox();
-                    var px = floor(pbb.x + pbb.width / 2), py = pbb.y + pbb.height + 0.5;
-                    var cx = floor(cbb.x + cbb.width / 2), cy = cbb.y - 0.5;
-                    svgatt(conn.ln, { x1: px, y1: py, x2: cx, y2: cy });
-                    if (box == parent_box) {
-                        var angle = Math.atan2(cx - px, cy - py);
-                        if (angle < min_angle) min_angle = angle;
-                        if (angle > max_angle) max_angle = angle;
-                        ++num_children;
-                    } else {
-                        has_parents = true;
-                    }
-                }
-                box.r.style.fill = box.concrete ? "#ccc" : null;
-                if (box.childstyle != CHILD_NORMAL && has_parents) {
-                    box.c.style.fill = (box.childstyle == CHILD_MANDATORY) ? "#888" : "#fff";
-                    svgatt(box.c, {visibility: "visible", cx: floor(bb.x + bb.width / 2), cy: bb.y - 0.5});
-                } else {
-                    svgatt(box.c, {visibility: "hidden"});
-                }
-                if (box.parentstyle != PARENT_NORMAL && num_children >= 2) {
-                    box.p.style.fill = (box.parentstyle == PARENT_OR) ? null : "none";
-                    var sx = floor(bb.x + bb.width / 2), sy = bb.y + bb.height + 0.5;         /* Center bottom */
-                    var lx = sx + parent_arc_r * Math.sin(max_angle), ly = sy + parent_arc_r * Math.cos(max_angle); /* Left starting point */
-                    var rx = sx + parent_arc_r * Math.sin(min_angle), ry = sy + parent_arc_r * Math.cos(min_angle); /* Right ending point */
-                    var draw = "M "+sx+" "+sy+" L "+lx+" "+ly+" A "+parent_arc_r+" "+parent_arc_r+" 0 0 1 "+rx+" "+ry+" Z";
-                    svgatt(box.p, {visibility: "visible", d: draw});
-                } else {
-                    svgatt(box.p, {visibility: "hidden"});
-                }
-            };
-            var box_doubleclick = function(box) {
-                if (edited_box == null || edited_box == box)
-                    return;
-                box_connect_toggle(box, edited_box);
-            };
-            var box_connect_toggle = function(box_a, box_b) {
-                /* Delete if they are already connected */
-                var removed_connection = false;
-                for (var i in box_a.conns) {
-                    var conn = box_a.conns[i];
-                    if (conn.box1 == box_b || conn.box2 == box_b) {
-                        if (conn.ln != null) {
-                            lines.removeChild(conn.ln);
-                            conn.ln = null;
-                        }
-                        box_a.conns.splice(i, 1);
-                        removed_connection = true;
-                        break;
-                    }
-                }
-                for (var i in box_b.conns) {
-                    var conn = box_b.conns[i];
-                    if (conn.box1 == box_a || conn.box2 == box_a) {
-                        if (conn.ln != null) {
-                            lines.removeChild(conn.ln);
-                            conn.ln = null;
-                        }
-                        box_b.conns.splice(i, 1);
-                        removed_connection = true;
-                        break;
-                    }
-                }
-                if (!removed_connection) {
-                    var ln = svgel("line");
-                    lines.appendChild(ln);
-                    var conn = { ln: ln, box1: box_a, box2: box_b };
-                    box_a.conns.push(conn);
-                    box_b.conns.push(conn);
-                }
-                box_update_visual(box_a);
-                box_update_visual(box_b);
-            };
-            var box_moving = null;
-            var box_clickoff = null;
-            var box_start_move = function(box, ev) {
-                if (box_moving != null)
-                    return;
-                box_moving = box;
-                window.addEventListener("mousemove", box_move_step);
-                window.addEventListener("mouseup", box_move_stop);
-                cancel_space_click = true;
-                /* Offset in the box to avoid jumping of the box */
-                box_clickoff = { x: ev.clientX - svg_left - box.x, y: ev.clientY - svg_top - box.y };
-            };
-            var box_move_step = function(ev) {
-                if (box_moving == null)
-                    return;
-                var x = ev.clientX - svg_left, y = ev.clientY - svg_top;
-                box_moving.x = x - box_clickoff.x, box_moving.y = y - box_clickoff.y;
-                box_update_complete(box_moving);
-            };
-            var box_move_stop = function(ev) {
-                window.removeEventListener("mousemove", box_move_step);
-                window.removeEventListener("mouseup", box_move_stop);
-                box_moving = null;
-            };
-            var box_delete = function(box) {
-                while (box.conns.length > 0) {
-                    var conn = box.conns[0];
-                    box_connect_toggle(conn.box1, conn.box2);
-                }
-                svg.removeChild(box.g);
-                for (var i in all_boxes)
-                    if (all_boxes[i] == box)
-                        all_boxes.splice(i, 1);
-            };
-            var edited_box = null;
-            var box_stop_editmode = function() {
-                settings.style.display = "none";
-                settings_name.oninput = null;
-                settings_abstract.onchange = null;
-                settings_child.onchange = null;
-                settings_parent.onchange = null;
-                settings_delete.onclick = null;
-                edited_box = null;
-            };
-            var box_editmode = function(box) {
-                if (edited_box != null) {
-                    edited_box.r.style.stroke = null;
-                    if (edited_box == box) {
-                        box_stop_editmode();
-                        return;
-                    }
-                }
-                /* Start edit mode for given box */
-                box.r.style.stroke = "#06f";
-                edited_box = box;
-                settings.style.display = "block"
-                settings_name.value = box.t.firstChild.textContent;
-                settings_name.oninput = function(ev) {
-                    box.t.firstChild.textContent = settings_name.value;
-                    box_update_complete(box);
-                };
-                settings_abstract.value = box.concrete ? "C" : "A";
-                settings_abstract.onchange = function(ev) {
-                    box.concrete = (settings_abstract.value == "C");
-                    box_update_visual(box);
-                };
-                settings_child.value = box.childstyle;
-                settings_child.onchange = function(ev) {
-                    box.childstyle = settings_child.value;
-                    box_update_visual(box);
-                };
-                settings_parent.value = box.parentstyle;
-                settings_parent.onchange = function(ev) {
-                    box.parentstyle = settings_parent.value;
-                    box_update_visual(box);
-                };
-                settings_delete.onclick = function(ev) {
-                    box_delete(box);
-                    box_stop_editmode();
-                };
-                settings_name.focus();
-                settings_name.select();
-            };
-            
-            /* Click on the empty space to create new boxes */
-            var space_clicked = function(ev) {
-                if (cancel_space_click) {
-                    cancel_space_click = false;
-                    return;
-                }
-                var x = ev.clientX - svg_left, y = ev.clientY - svg_top;
-                var box = create_box("Box name", x, y + 10, false, CHILD_NORMAL, PARENT_NORMAL);
-                box_editmode(box);
-            };
-            svg.addEventListener("click", space_clicked);
-            
-            /* Update SVG size so that it fills the entire screen */
-            var svg_top, svg_left;
-            var update_svg_pos = function() {
-                var bb = svg.getBoundingClientRect();
-                svg_top  = bb.top;
-                svg_left = bb.left;
-            };
-            var fit_screen_size = function() {
-                svg.setAttribute("width", floor(window.innerWidth) + "px");
-                svg.setAttribute("height", floor(window.innerHeight) + "px");
-                update_svg_pos();
-            };
-            window.addEventListener("resize", fit_screen_size);
-            
-            /* SVG subelements can't cancel default action... need to disable it for entire SVG */
-            svg.oncontextmenu = function(ev) { ev.preventDefault(); };
-            
-            /* Export/import options */
-            var create_exported_svg = function() {
-                /* Find area with elements */
-                var dim = { left: parseInt(svg.getAttribute("width")), right: 0, top: parseInt(svg.getAttribute("height")), bottom: 0 };
-                for (var i in all_boxes) {
-                    var box = all_boxes[i];
-                    var bb = box.r.getBBox();
-                    if (bb.x < dim.left)
-                        dim.left = bb.x;
-                    if (bb.x + bb.width > dim.right)
-                        dim.right = bb.x + bb.width;
-                    if (bb.y < dim.top)
-                        dim.top = bb.y;
-                    if (bb.y + bb.height > dim.bottom)
-                        dim.bottom = bb.y + bb.height;
-                }
-                var pad_area = 10;
-                var translate_x = dim.left - pad_area, translate_y = dim.top - pad_area;
-                var new_w = (dim.right - dim.left) + 2 * pad_area, new_h = (dim.bottom - dim.top) + 2 * pad_area;
-                /* Create new SVG with appropriate size and copy style */
-                var new_svg = svgel("svg", { width: new_w, height: new_h, xmlns: "http://www.w3.org/2000/svg" });
-                for (var i in svg.childNodes) {
-                    if (svg.childNodes[i].tagName == "style") {
-                        new_svg.appendChild(svg.childNodes[i].cloneNode(true));
-                        break;
-                    }
-                }
-                var new_lines = svgel("g");
-                new_svg.appendChild(new_lines);
-                /* Recreate all boxes */
-                var translate_boxes = [];
-                for (var i in all_boxes) {
-                    var box = all_boxes[i];
-                    var new_box = create_box_element(box.t.firstChild.textContent, box.x - translate_x, box.y - translate_y, box.concrete, box.childstyle, box.parentstyle);
-                    translate_boxes[i] = new_box;
-                    new_svg.appendChild(new_box.g);
-                }
-                /* Recreate connections */
-                var old_conns = [];
-                var new_conns = [];
-                for (var i in all_boxes) {
-                    var box = all_boxes[i];
-                    var new_box = translate_boxes[i];
-                    for (var j in box.conns) {
-                        var conn = box.conns[j];
-                        var oci = old_conns.indexOf(conn);
-                        if (oci < 0) {
-                            old_conns.push(conn);
-                            var box2 = (box == conn.box1) ? conn.box2 : conn.box1;
-                            new_box2 = translate_boxes[all_boxes.indexOf(box2)];
-                            var ln = svgel("line");
-                            new_lines.appendChild(ln);
-                            new_conn = { ln: ln, box1: new_box, box2: new_box2 };
-                            new_conns.push(new_conn);
-                            new_box.conns.push(new_conn);
-                        } else {
-                            new_box.conns.push(new_conns[oci]);
-                        }
-                    }
-                }
-                /* Insert temporarily to actual DOM, update all new elements, and remove it again */
-                document.body.appendChild(new_svg);
-                for (var i in all_boxes) {
-                    box_update_complete(translate_boxes[i]);
-                }
-                document.body.removeChild(new_svg);
-                return { w: new_w, h: new_h, data: URL.createObjectURL(new Blob([new_svg.outerHTML], {type: "image/svg+xml;charset=utf-8"})) };
-            };
-            var import_exported_svg = function(svg_doc) {
-                /* Find and add boxes */
-                var box_pos = [];  /* Box positions */
-                var con_group = null; /* First g element contains connections */
-                for (var i in svg_doc.childNodes) {
-                    var el = svg_doc.childNodes[i];
-                    if (el.nodeName != "g")
-                        continue;
-                    if (el.childNodes.length < 4) {
-                        con_group = el;
-                        continue;
-                    }
-                    var path = el.childNodes[0]; /* Parent type */
-                    var rect = el.childNodes[1]; /* Surrounding box */
-                    var text = el.childNodes[2]; /* Box name */
-                    var circ = el.childNodes[3]; /* Child type */
-                    if (path.nodeName != "path" || rect.nodeName != "rect" || text.nodeName != "text" || circ.nodeName != "circle") {
-                        con_group = el;
-                        continue;
-                    }
-                    if (! text.firstChild)
-                        continue;
-                    var name = text.firstChild.textContent;
-                    var x = parseFloat(rect.getAttribute("x")), y = parseFloat(rect.getAttribute("y"));
-                    var w = parseFloat(rect.getAttribute("width")), h = parseFloat(rect.getAttribute("height"));
-                    var concrete = (rect.style.fill != "");
-                    var childstyle = (circ.getAttribute("visibility") == "hidden")
-                        ? CHILD_NORMAL
-                        : (circ.style.fill.match(/\d+/g).map(Number).join(",") == "255,255,255")
-                            ? CHILD_OPTIONAL
-                            : CHILD_MANDATORY;
-                    var parentstyle = (path.getAttribute("visibility") == "hidden")
-                        ? PARENT_NORMAL
-                        : (path.style.fill == "none")
-                            ? PARENT_ALTERNATIVE
-                            : PARENT_OR;
-                    var box = create_box(name, x + 0.5 * w + 100, y + 170, concrete, childstyle, parentstyle);
-                    box_pos.push({ x1: x, y1: y, x2: x + w, y2: y + h, box: box });
-                }
-                if (box_pos.length == 0 || con_group == null) {
-                    alert("Failed to import SVG, not enough elements found");
-                    return;
-                }
-                /* Find and add lines between boxes */
-                connections = [];
-                for (var i in con_group.childNodes) {
-                    var line = con_group.childNodes[i];
-                    if (line.nodeName != "line")
-                        continue;
-                    var boxes = [];
-                    var x1 = parseFloat(line.getAttribute("x1")), y1 = parseFloat(line.getAttribute("y1"));
-                    var x2 = parseFloat(line.getAttribute("x2")), y2 = parseFloat(line.getAttribute("y2"));
-                    for (var j in box_pos) {
-                        var box = box_pos[j];
-                        /* Is one of the ends of the line in a box? */
-                        if (((x1 + 1) >= box.x1 && (x1 - 1) <= box.x2 && (y1 + 1) >= box.y1 && (y1 - 1) <= box.y2)
-                         || ((x2 + 1) >= box.x1 && (x2 - 1) <= box.x2 && (y2 + 1) >= box.y1 && (y2 - 1) <= box.y2)) {
-                            boxes.push(box);
-                        }
-                    }
-                    connections.push({ line: line, boxes: boxes });
-                }
-                for (var i in connections) {
-                    var connection = connections[i];
-                    if (connection.boxes.length < 2)
-                        continue;
-                    box_connect_toggle(connection.boxes[0].box, connection.boxes[1].box);
-                }
-            };
-            id("export_png").addEventListener("click", function() {
-                if (all_boxes.length == 0) {
-                    alert("Nothing to export.");
-                    return;
-                }
-                var expsvg = create_exported_svg();
-                var canv = document.createElement("canvas");
-                canv.width = expsvg.w;
-                canv.height = expsvg.h;
-                var img = new Image();
-                img.onload = function () {
-                    var ctx = canv.getContext("2d");
-                    ctx.clearRect(0, 0, expsvg.w, expsvg.h);
-                    ctx.drawImage(img, 0, 0);
-                    var link = document.createElement("a");
-                    link.href = canv.toDataURL("image/png");
-                    link.download = "feature_model.png";
-                    link.click();
-                };
-                img.src = expsvg.data;
-            });
-            id("export_svg").addEventListener("click", function() {
-                if (all_boxes.length == 0) {
-                    alert("Nothing to export.");
-                    return;
-                }
-                var expsvg = create_exported_svg();
-                var link = document.createElement("a");
-                link.href = expsvg.data;
-                link.download = "feature_model.svg";
-                link.click();
-            });
-            id("import_svg").addEventListener("click", function() {
-                if (all_boxes.length > 0) {
-                    if (! confirm("Current diagram is not empty, do you want to import more elements?"))
-                        return;
-                }
-                var file_inp = document.createElement("input");
-                file_inp.setAttribute("type", "file");
-                file_inp.setAttribute("accept", ".svg,image/svg+xml");
-                file_inp.onchange = function() {
-                    if (file_inp.files.length < 1)
-                        return;
-                    let reader = new FileReader();
-                    reader.onload = function() {
-                        let imported_svg = new DOMParser().parseFromString(reader.result, "image/svg+xml");
-                        import_exported_svg(imported_svg.documentElement);
-                    };
-                    reader.readAsText(file_inp.files[0]);
-                }
-                file_inp.click();
-            });
-            
-            /* Let's go ! */
-            fit_screen_size();
+                box_b.conns.splice(i, 1);
+                removed_connection = true;
+                break;
+            }
+        }
+        if (!removed_connection) {
+            var ln = svgel("line");
+            lines.appendChild(ln);
+            var conn = {ln: ln, box1: box_a, box2: box_b};
+            box_a.conns.push(conn);
+            box_b.conns.push(conn);
+        }
+        box_update_visual(box_a);
+        box_update_visual(box_b);
+    };
+    var box_moving = null;
+    var box_clickoff = null;
+    var box_start_move = function (box, ev) {
+        if (box_moving != null)
+            return;
+        box_moving = box;
+        window.addEventListener("mousemove", box_move_step);
+        window.addEventListener("mouseup", box_move_stop);
+        cancel_space_click = true;
+        /* Offset in the box to avoid jumping of the box */
+        box_clickoff = {x: ev.clientX - svg_left - box.x, y: ev.clientY - svg_top - box.y};
+    };
+    var box_move_step = function (ev) {
+        if (box_moving == null)
+            return;
+        var x = ev.clientX - svg_left, y = ev.clientY - svg_top;
+        box_moving.x = x - box_clickoff.x, box_moving.y = y - box_clickoff.y;
+        box_update_complete(box_moving);
+    };
+    var box_move_stop = function (ev) {
+        window.removeEventListener("mousemove", box_move_step);
+        window.removeEventListener("mouseup", box_move_stop);
+        box_moving = null;
+    };
+    var box_delete = function (box) {
+        while (box.conns.length > 0) {
+            var conn = box.conns[0];
+            box_connect_toggle(conn.box1, conn.box2);
+        }
+        svg.removeChild(box.g);
+        for (var i in all_boxes)
+            if (all_boxes[i] == box)
+                all_boxes.splice(i, 1);
+    };
+    var edited_box = null;
+    var box_stop_editmode = function () {
+        settings.style.display = "none";
+        settings_name.oninput = null;
+        settings_abstract.onchange = null;
+        settings_child.onchange = null;
+        settings_parent.onchange = null;
+        settings_delete.onclick = null;
+        edited_box = null;
+    };
+    var box_editmode = function (box) {
+        if (edited_box != null) {
+            edited_box.r.style.stroke = null;
+            if (edited_box == box) {
+                box_stop_editmode();
+                return;
+            }
+        }
+        /* Start edit mode for given box */
+        box.r.style.stroke = "#06f";
+        edited_box = box;
+        settings.style.display = "block"
+        settings_name.value = box.t.firstChild.textContent;
+        settings_name.oninput = function (ev) {
+            box.t.firstChild.textContent = settings_name.value;
+            box_update_complete(box);
+        };
+        settings_abstract.value = box.concrete ? "C" : "A";
+        settings_abstract.onchange = function (ev) {
+            box.concrete = (settings_abstract.value == "C");
+            box_update_visual(box);
+        };
+        settings_child.value = box.childstyle;
+        settings_child.onchange = function (ev) {
+            box.childstyle = settings_child.value;
+            box_update_visual(box);
+        };
+        settings_parent.value = box.parentstyle;
+        settings_parent.onchange = function (ev) {
+            box.parentstyle = settings_parent.value;
+            box_update_visual(box);
+        };
+        settings_delete.onclick = function (ev) {
+            box_delete(box);
             box_stop_editmode();
-        </script>
-    </body>
+        };
+        settings_name.focus();
+        settings_name.select();
+    };
+
+    /* Click on the empty space to create new boxes */
+    var space_clicked = function (ev) {
+        if (cancel_space_click) {
+            cancel_space_click = false;
+            return;
+        }
+        var x = ev.clientX - svg_left, y = ev.clientY - svg_top;
+        var box = create_box("Box name", x, y + 10, false, CHILD_NORMAL, PARENT_NORMAL);
+        box_editmode(box);
+    };
+    svg.addEventListener("click", space_clicked);
+
+    /* Update SVG size so that it fills the entire screen */
+    var svg_top, svg_left;
+    var update_svg_pos = function () {
+        var bb = svg.getBoundingClientRect();
+        svg_top = bb.top;
+        svg_left = bb.left;
+    };
+    var fit_screen_size = function () {
+        svg.setAttribute("width", floor(window.innerWidth) + "px");
+        svg.setAttribute("height", floor(window.innerHeight) + "px");
+        update_svg_pos();
+    };
+    window.addEventListener("resize", fit_screen_size);
+
+    /* SVG subelements can't cancel default action... need to disable it for entire SVG */
+    svg.oncontextmenu = function (ev) {
+        ev.preventDefault();
+    };
+
+    /* Export/import options */
+    var create_exported_svg = function () {
+        /* Find area with elements */
+        var dim = {
+            left: parseInt(svg.getAttribute("width")),
+            right: 0,
+            top: parseInt(svg.getAttribute("height")),
+            bottom: 0
+        };
+        for (var i in all_boxes) {
+            var box = all_boxes[i];
+            var bb = box.r.getBBox();
+            if (bb.x < dim.left)
+                dim.left = bb.x;
+            if (bb.x + bb.width > dim.right)
+                dim.right = bb.x + bb.width;
+            if (bb.y < dim.top)
+                dim.top = bb.y;
+            if (bb.y + bb.height > dim.bottom)
+                dim.bottom = bb.y + bb.height;
+        }
+        var pad_area = 10;
+        var translate_x = dim.left - pad_area, translate_y = dim.top - pad_area;
+        var new_w = (dim.right - dim.left) + 2 * pad_area, new_h = (dim.bottom - dim.top) + 2 * pad_area;
+        /* Create new SVG with appropriate size and copy style */
+        var new_svg = svgel("svg", {width: new_w, height: new_h, xmlns: "http://www.w3.org/2000/svg"});
+        for (var i in svg.childNodes) {
+            if (svg.childNodes[i].tagName == "style") {
+                new_svg.appendChild(svg.childNodes[i].cloneNode(true));
+                break;
+            }
+        }
+        var new_lines = svgel("g");
+        new_svg.appendChild(new_lines);
+        /* Recreate all boxes */
+        var translate_boxes = [];
+        for (var i in all_boxes) {
+            var box = all_boxes[i];
+            var new_box = create_box_element(box.t.firstChild.textContent, box.x - translate_x, box.y - translate_y, box.concrete, box.childstyle, box.parentstyle);
+            translate_boxes[i] = new_box;
+            new_svg.appendChild(new_box.g);
+        }
+        /* Recreate connections */
+        var old_conns = [];
+        var new_conns = [];
+        for (var i in all_boxes) {
+            var box = all_boxes[i];
+            var new_box = translate_boxes[i];
+            for (var j in box.conns) {
+                var conn = box.conns[j];
+                var oci = old_conns.indexOf(conn);
+                if (oci < 0) {
+                    old_conns.push(conn);
+                    var box2 = (box == conn.box1) ? conn.box2 : conn.box1;
+                    new_box2 = translate_boxes[all_boxes.indexOf(box2)];
+                    var ln = svgel("line");
+                    new_lines.appendChild(ln);
+                    new_conn = {ln: ln, box1: new_box, box2: new_box2};
+                    new_conns.push(new_conn);
+                    new_box.conns.push(new_conn);
+                } else {
+                    new_box.conns.push(new_conns[oci]);
+                }
+            }
+        }
+        /* Insert temporarily to actual DOM, update all new elements, and remove it again */
+        document.body.appendChild(new_svg);
+        for (var i in all_boxes) {
+            box_update_complete(translate_boxes[i]);
+        }
+        document.body.removeChild(new_svg);
+        return {
+            w: new_w,
+            h: new_h,
+            data: URL.createObjectURL(new Blob([new_svg.outerHTML], {type: "image/svg+xml;charset=utf-8"}))
+        };
+    };
+    var import_exported_svg = function (svg_doc) {
+        /* Find and add boxes */
+        var box_pos = [];  /* Box positions */
+        var con_group = null; /* First g element contains connections */
+        for (var i in svg_doc.childNodes) {
+            var el = svg_doc.childNodes[i];
+            if (el.nodeName != "g")
+                continue;
+            if (el.childNodes.length < 4) {
+                con_group = el;
+                continue;
+            }
+            var path = el.childNodes[0]; /* Parent type */
+            var rect = el.childNodes[1]; /* Surrounding box */
+            var text = el.childNodes[2]; /* Box name */
+            var circ = el.childNodes[3]; /* Child type */
+            if (path.nodeName != "path" || rect.nodeName != "rect" || text.nodeName != "text" || circ.nodeName != "circle") {
+                con_group = el;
+                continue;
+            }
+            if (!text.firstChild)
+                continue;
+            var name = text.firstChild.textContent;
+            var x = parseFloat(rect.getAttribute("x")), y = parseFloat(rect.getAttribute("y"));
+            var w = parseFloat(rect.getAttribute("width")), h = parseFloat(rect.getAttribute("height"));
+            var concrete = (rect.style.fill != "");
+            var childstyle = (circ.getAttribute("visibility") == "hidden")
+                ? CHILD_NORMAL
+                : (circ.style.fill.match(/\d+/g).map(Number).join(",") == "255,255,255")
+                    ? CHILD_OPTIONAL
+                    : CHILD_MANDATORY;
+            var parentstyle = (path.getAttribute("visibility") == "hidden")
+                ? PARENT_NORMAL
+                : (path.style.fill == "none")
+                    ? PARENT_ALTERNATIVE
+                    : PARENT_OR;
+            var box = create_box(name, x + 0.5 * w + 100, y + 170, concrete, childstyle, parentstyle);
+            box_pos.push({x1: x, y1: y, x2: x + w, y2: y + h, box: box});
+        }
+        if (box_pos.length == 0 || con_group == null) {
+            alert("Failed to import SVG, not enough elements found");
+            return;
+        }
+        /* Find and add lines between boxes */
+        connections = [];
+        for (var i in con_group.childNodes) {
+            var line = con_group.childNodes[i];
+            if (line.nodeName != "line")
+                continue;
+            var boxes = [];
+            var x1 = parseFloat(line.getAttribute("x1")), y1 = parseFloat(line.getAttribute("y1"));
+            var x2 = parseFloat(line.getAttribute("x2")), y2 = parseFloat(line.getAttribute("y2"));
+            for (var j in box_pos) {
+                var box = box_pos[j];
+                /* Is one of the ends of the line in a box? */
+                if (((x1 + 1) >= box.x1 && (x1 - 1) <= box.x2 && (y1 + 1) >= box.y1 && (y1 - 1) <= box.y2)
+                    || ((x2 + 1) >= box.x1 && (x2 - 1) <= box.x2 && (y2 + 1) >= box.y1 && (y2 - 1) <= box.y2)) {
+                    boxes.push(box);
+                }
+            }
+            connections.push({line: line, boxes: boxes});
+        }
+        for (var i in connections) {
+            var connection = connections[i];
+            if (connection.boxes.length < 2)
+                continue;
+            box_connect_toggle(connection.boxes[0].box, connection.boxes[1].box);
+        }
+    };
+    id("export_png").addEventListener("click", function () {
+        if (all_boxes.length == 0) {
+            alert("Nothing to export.");
+            return;
+        }
+        var expsvg = create_exported_svg();
+        var canv = document.createElement("canvas");
+        canv.width = expsvg.w;
+        canv.height = expsvg.h;
+        var img = new Image();
+        img.onload = function () {
+            var ctx = canv.getContext("2d");
+            ctx.clearRect(0, 0, expsvg.w, expsvg.h);
+            ctx.drawImage(img, 0, 0);
+            var link = document.createElement("a");
+            link.href = canv.toDataURL("image/png");
+            link.download = "feature_model.png";
+            link.click();
+        };
+        img.src = expsvg.data;
+    });
+    id("export_svg").addEventListener("click", function () {
+        if (all_boxes.length == 0) {
+            alert("Nothing to export.");
+            return;
+        }
+        var expsvg = create_exported_svg();
+        var link = document.createElement("a");
+        link.href = expsvg.data;
+        link.download = "feature_model.svg";
+        link.click();
+    });
+    id("import_svg").addEventListener("click", function () {
+        if (all_boxes.length > 0) {
+            if (!confirm("Current diagram is not empty, do you want to import more elements?"))
+                return;
+        }
+        var file_inp = document.createElement("input");
+        file_inp.setAttribute("type", "file");
+        file_inp.setAttribute("accept", ".svg,image/svg+xml");
+        file_inp.onchange = function () {
+            if (file_inp.files.length < 1)
+                return;
+            let reader = new FileReader();
+            reader.onload = function () {
+                let imported_svg = new DOMParser().parseFromString(reader.result, "image/svg+xml");
+                import_exported_svg(imported_svg.documentElement);
+            };
+            reader.readAsText(file_inp.files[0]);
+        }
+        file_inp.click();
+    });
+
+    /* Let's go ! */
+    fit_screen_size();
+    box_stop_editmode();
+</script>
+</body>
 </html>
